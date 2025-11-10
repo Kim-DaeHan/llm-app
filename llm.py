@@ -12,19 +12,23 @@ def format_docs(docs):
     return "\n\n".join(doc.page_content for doc in docs)
 
 
-def get_ai_message(user_message):
+def get_retriever():
     embeddings = OpenAIEmbeddings(model="text-embedding-3-large")
     index_name = "tax-index"
     db = PineconeVectorStore.from_existing_index(
         index_name=index_name, embedding=embeddings
     )
-
-    llm = ChatOpenAI(model="gpt-5-mini", temperature=0)
-    client = Client()
-    rag_prompt = client.pull_prompt("rlm/rag-prompt")
     retriever = db.as_retriever(search_kwargs={"k": 4})
+    return retriever
 
+
+def get_llm(model="gpt-5-mini"):
+    return ChatOpenAI(model=model, temperature=0)
+
+
+def get_dictionary_chain():
     dictionary = ["사람을 나타내는 표현 -> 거주자"]
+    llm = get_llm()
 
     dictionary_prompt = ChatPromptTemplate.from_template(
         f"""
@@ -39,6 +43,16 @@ def get_ai_message(user_message):
 
     dictionary_chain = dictionary_prompt | llm | StrOutputParser()
 
+    return dictionary_chain
+
+
+def get_rag_chain():
+    llm = get_llm()
+    retriever = get_retriever()
+
+    client = Client()
+    rag_prompt = client.pull_prompt("rlm/rag-prompt")
+
     rag_chain = (
         {
             "context": itemgetter("question") | retriever | format_docs,
@@ -49,6 +63,12 @@ def get_ai_message(user_message):
         | StrOutputParser()
     )
 
+    return rag_chain
+
+
+def get_ai_message(user_message):
+    dictionary_chain = get_dictionary_chain()
+    rag_chain = get_rag_chain()
     tax_chain = {"question": dictionary_chain} | rag_chain
     ai_message = tax_chain.invoke({"question": user_message})
     return ai_message
