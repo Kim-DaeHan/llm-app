@@ -9,6 +9,8 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import START, StateGraph
 from langgraph.graph.message import add_messages
 
+from few_shot_examples import get_few_shot_examples
+
 
 def get_retriever():
     embeddings = OpenAIEmbeddings(model="text-embedding-3-large")
@@ -100,11 +102,11 @@ def generate_answer(state: State):
     llm = get_llm()
 
     qa_system_prompt = (
-        "You are an assistant for question-answering tasks. "
-        "Use the following pieces of retrieved context to answer "
-        "the question. If you don't know the answer, say that you "
-        "don't know. Use three sentences maximum and keep the "
-        "answer concise."
+        "당신은 소득세법 전문가입니다. 사용자의 소득세법에 관한 질문에 답변해주세요"
+        "아래에 제공된 문서를 활용해서 답변해주시고"
+        "답변을 알 수 없다면 모른다고 답변해주세요"
+        "답변을 제공할 때는 소득세법 (XX조)에 따르면 이라고 시작하면서 답변해주시고"
+        "2~3 문장정도의 짧은 내용의 답변을 원합니다"
         "\n\n"
         "{context}"
     )
@@ -130,7 +132,10 @@ def generate_answer(state: State):
     # 대화 히스토리에 질문과 답변 추가
     return {
         "answer": answer,
-        "messages": [HumanMessage(content=state["question"]), AIMessage(content=answer)],
+        "messages": [
+            HumanMessage(content=state["question"]),
+            AIMessage(content=answer),
+        ],
     }
 
 
@@ -140,22 +145,30 @@ def generate_answer_stream(context: str, messages: list, question: str):
     llm = get_llm()
 
     qa_system_prompt = (
-        "You are an assistant for question-answering tasks. "
-        "Use the following pieces of retrieved context to answer "
-        "the question. If you don't know the answer, say that you "
-        "don't know. Use three sentences maximum and keep the "
-        "answer concise."
+        "You are an assistant for question-answering tasks about Korean tax law. "
+        "Answer the question based on the retrieved context. "
+        "Always cite the specific law article in your answer using the format: '소득세법 제 X조에 따르면'. "
+        "If you don't know the answer, say that you don't know. "
+        "Keep the answer concise and professional."
         "\n\n"
-        "{context}"
+        "Context:\n{context}"
     )
 
-    qa_prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", qa_system_prompt),
-            MessagesPlaceholder("messages"),
-            ("human", "{question}"),
-        ]
-    )
+    # Few-shot 예제 가져오기
+    examples = get_few_shot_examples()
+
+    # 프롬프트 메시지 구성
+    prompt_messages = [("system", qa_system_prompt), MessagesPlaceholder("messages")]
+
+    # Few-shot 예제 추가
+    for example in examples:
+        prompt_messages.append(("human", example["question"]))
+        prompt_messages.append(("ai", example["answer"]))
+
+    # 실제 질문 추가
+    prompt_messages.append(("human", "{question}"))
+
+    qa_prompt = ChatPromptTemplate.from_messages(prompt_messages)
 
     qa_chain = qa_prompt | llm | StrOutputParser()
 
